@@ -1,0 +1,195 @@
+# Evaluate an ApxInf-served PI0.5 checkpoint on LIBERO-10 through RLinf.
+#
+# This is the RLinf-side half of `apxinf_robo.integrations.rlinf`. It stays in
+# *this* repository and is reached with hydra's `--config-path`, so it is
+# versioned with the adapter it configures:
+#
+#     RLINF=/path/to/RLinf scripts/rlinf_eval.sh libero_10_apxinf_robo_pi05_eval \
+#         rollout.model.model_path=/ckpt/pi05_libero
+#
+# That wrapper exports what RLinf's own `evaluations/run_eval.sh` exports for
+# the LIBERO benchmark, then calls RLinf's `evaluations/eval_embodied_agent.py`
+# directly. Nothing is copied into RLinf's tree.
+#
+# The file name matters twice: it must keep the `libero_` prefix (RLinf's
+# `infer_benchmark` reads it to pick the benchmark), and `_apxinf_robo_` keeps
+# it distinct from RLinf PR #1537's `libero_10_apxinf_pi05_eval.yaml`, which is
+# a different integration of the same engine at a different seam.
+#
+# It is deliberately shaped after RLinf's
+# `evaluations/libero/libero_10_openpi_pi05_eval.yaml` -- same defaults list,
+# same runner and env blocks, same 500-episode protocol -- so an ApxInf number
+# and an openpi number are comparable line by line. Everything specific to this
+# backend is under `rollout.model`.
+#
+# EVALUATION ONLY. `task_type: embodied_eval` is what
+# `evaluations/eval_embodied_agent.py` runs: a rollout group and an env group,
+# no actor and no optimizer. That is exactly what the engine can do --
+# `ApxInfActionModel` raises on mode="train" and has no forward pass, because
+# ApxInf is a Rust inference runtime with no autograd. To *train* a PI0.5
+# checkpoint use RLinf's openpi backend
+# (`examples/embodiment/config/libero_10_grpo_openpi_pi05.yaml`) and evaluate
+# the export with this file.
+
+defaults:
+  - env/libero_10@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    # Resolves `env/libero_10` above, out of RLinf's own env definitions rather
+    # than a vendored copy that could drift from the one openpi is scored on.
+    # `scripts/rlinf_eval.sh` exports EMBODIED_PATH; so does RLinf's run_eval.sh.
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_10_apxinf_robo_pi05_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    # LIBERO-10 is 10 tasks; 500 envs = 50 episodes each. The same protocol the
+    # standalone `apxinf-robo eval-libero` harness publishes, so the two numbers
+    # mean the same thing.
+    #
+    # For a smoke run, `env.eval.total_num_envs=10` is one episode per task --
+    # every task exercised, ~10x faster, and plain env overrides, so it works
+    # through RLinf's `run_eval.sh` unchanged. At n=1 per task it detects gross
+    # breakage only; the binomial error bar at n=10 total is far too wide to
+    # compare against a published number.
+    total_num_envs: 500
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 520
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  # `rollout_backend` is deliberately absent, which means "huggingface" ->
+  # `MultiStepRolloutWorker`. RLinf has two extension axes and only the model one
+  # has a registry: `rollout_backend` is a hardcoded if/elif in
+  # `evaluations/eval_embodied_agent.py`. Riding the huggingface worker is what
+  # keeps this to six lines across two files instead of a fork -- and it means
+  # the ApxInf number and the openpi number come out of the same rollout loop,
+  # the same env group, and the same metrics.
+
+  model:
+    # RLinf's axis. This one name has to reach two registries in two
+    # processes: `register()` in `rlinf/models/__init__.py` gives the rollout
+    # worker a builder, and `register_model_types()` in `rlinf/config.py` gives
+    # the env worker the name, which it looks up before stepping the simulator.
+    # The name is per (model, engine) pair, not a bare `apxinf`, because this
+    # slot names a *model* and ApxInf is an engine that hosts several. See
+    # APXINF_MODEL_TYPES.
+    model_type: "pi05_apxinf"
+
+    # An ApxInf-loadable PI0.5 checkpoint directory: either an openpi export
+    # (metadata.pt + assets/<id>/norm_stats.json) or a LeRobot layout
+    # (config.json + policy_preprocessor.json). Vet it first, on any machine:
+    #
+    #     apxinf-robo inspect <model_path> --robot franka_libero
+    #
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT"
+
+    # RLinf reads these two directly (the chunk length it consumes per env step,
+    # and the env action width). They are also handed to the adapter, so the
+    # config cannot disagree with what the policy actually returns. 5 is what
+    # RLinf's own openpi PI0.5 configs execute out of a 10-step prediction.
+    num_action_chunks: 5
+    action_dim: 7
+
+    # Read by `rlinf.models.get_model` before it reaches the builder. There is
+    # nothing to move or quantize on the torch side: the engine allocated its
+    # device at load time, and its numeric mode is `apxinf.precision` below,
+    # which selects a compiled kernel path rather than a torch dtype.
+    precision: null
+    is_lora: False
+    load_to_device: False
+
+    # --- the ApxInf-specific block ---------------------------------------
+    apxinf:
+      # ApxInf's axis: which policy class AutoPolicy loads. Same word as the
+      # `model_type` above, different registry -- the nesting is what keeps them
+      # apart. `register()` already binds `pi05` to `pi05_apxinf`, so this is an
+      # override; drop it and AutoPolicy sniffs the checkpoint layout instead.
+      model_type: pi05
+
+      # The wire contract: camera keys, state routing, action width. The same
+      # preset `apxinf-robo serve --robot` uses, so evaluating here and serving
+      # over the websocket are driven by one definition rather than two.
+      robot: franka_libero
+
+      device: "cuda:0"
+      # bf16 is openpi's numeric contract. `auto` resolves to a quantized kernel
+      # path on Jetson parts (Orin SM87, Thor SM110), which is a *different*
+      # contract -- pin it for a comparable evaluation number.
+      precision: bf16
+
+      num_action_chunks: ${..num_action_chunks}
+      action_dim: ${..action_dim}
+
+      # Anything else reaches the policy's from_pretrained unchanged.
+      policy_kwargs:
+        # PI0.5's openpi contract: 5 flow steps, predict 10 steps, execute the
+        # first `num_action_chunks`. Named here rather than left to the
+        # checkpoint so this file and RLinf's openpi config say the same thing.
+        num_flow_steps: 5
+        action_horizon: 10
+        flow_start_time: 1.0
+        seed: 0
+
+        # Not optional, and not merely a warning silencer. A LeRobot layout
+        # declares its transforms in policy_{pre,post}processor.json; when those
+        # carry no statistics the load *succeeds* and both the state and action
+        # transforms fall back to identity passthrough -- upstream LeRobot's
+        # behaviour, but not the checkpoint openpi was scored on -- and the
+        # sibling norm_stats.json is never consulted. Measured on
+        # lerobot/pi05_libero_base, naming it moves actions by up to 0.39
+        # absolute: without this line the run does not produce a slightly worse
+        # number, it produces un-denormalized actions.
+        #
+        # It is named explicitly, and interpolated off model_path, so that
+        # overriding the checkpoint on the command line carries its statistics
+        # along -- through RLinf's own `evaluations/run_eval.sh` as much as
+        # through `scripts/rlinf_eval.sh`.
+        #
+        # An openpi export keeps its statistics at assets/<id>/norm_stats.json
+        # instead and is picked up from the layout; for one of those, drop this
+        # line rather than pointing it at a file that is not there.
+        norm_stats: "${rollout.model.model_path}/norm_stats.json"

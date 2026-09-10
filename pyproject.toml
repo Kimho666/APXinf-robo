@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apxinf-robo"
+version = "0.1.0"
+description = "Robot and evaluation-environment adaptation for the ApxInf inference engine"
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# The engine itself is a submodule, installed editable from apxinf/.
+# It is deliberately NOT a pip dependency: it is a Rust/PyO3/CUDA build that has
+# to be compiled for the target machine.
+#
+# `rlinf` is empty on purpose, and still worth declaring. RLinf is not on PyPI:
+# it is used from a checkout, located at run time by $RLINF (see
+# scripts/rlinf_eval.sh), so there is nothing to pin here. The adapter needs
+# nothing beyond the base dependencies either -- it imports rlinf lazily and
+# falls back to a plain object when it is absent, which is what keeps
+# tests/test_rlinf_*.py runnable on a laptop.
+rlinf = []
+libero = ["pillow", "openpi-client"]
+robosuite = ["pillow", "openpi-client"]
+isaaclab = ["pillow", "openpi-client"]
+lerobot = ["torch"]
+serve = ["websockets", "msgpack"]
+dev = ["pytest>=7", "ruff"]
+
+[project.scripts]
+apxinf-robo = "apxinf_robo.cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
