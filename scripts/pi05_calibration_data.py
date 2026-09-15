@@ -1,7 +1,8 @@
-"""Data-source adapters for PI0.5 calibration Observations.
+"""Load PI0.5 calibration observations from NPZ, JSONL, or native LIBERO.
 
-The calibration module consumes ApxInf Observations.  This module is the
-optional outer seam that translates storage formats into that contract.
+Use NPZ files from apxinf-robo capture-libero to reuse recorded observations.
+Native LIBERO loading requires the simulator and uses the shared Robo conversion
+helpers. NPZ and JSONL loading requires numpy and Pillow.
 """
 
 from __future__ import annotations

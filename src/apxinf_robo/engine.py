@@ -52,29 +52,52 @@ _INSTALL_HINT = (
     "pip dependency, because it is a Rust/PyO3/CUDA build that has to be "
     "compiled for the target machine:\n"
     "    git submodule update --init --recursive\n"
-    "    pip install -e apxinf/python/apxinf\n"
+    "    pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict\n"
     "and build the apxinf_py extension with maturin for anything that runs a model."
 )
+
+
+def _checkout_namespace_dir(apxinf):
+    """Return the checkout directory if it is part of the imported namespace."""
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    submodule = repo_root / "apxinf"
+    if not submodule.is_dir():
+        return None
+    for entry in getattr(apxinf, "__path__", ()):
+        try:
+            resolved = pathlib.Path(entry).resolve()
+        except OSError:  # pragma: no cover - unreadable namespace path
+            continue
+        if resolved == submodule:
+            return submodule
+    return None
 
 
 def require_apxinf():
     """Import and return the ``apxinf`` package, with an actionable error.
 
-    A bare ``ModuleNotFoundError: apxinf`` reads like a typo. It is almost always
-    an uninitialized submodule, so say that instead.
-
-    The submodule directory is itself named ``apxinf``, so running from the
-    repository root puts it on ``sys.path`` and an uninstalled engine imports as
-    an empty implicit namespace package instead of raising -- the failure would
-    resurface later as a missing *submodule* of it, which reads like a version
-    mismatch rather than a missing install. A real package has a ``__file__``;
-    a namespace package does not.
+    Without a usable engine installation, the checkout's ``apxinf/`` directory
+    can resolve as an empty namespace package. This can also interfere with
+    some editable-install finders; an ordinary installed package takes
+    precedence over a namespace directory. A namespace alone cannot tell us
+    whether the engine is installed, so retain installation guidance in both
+    cases and describe checkout interference only as a possible cause.
     """
     try:
         import apxinf
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise ImportError(_INSTALL_HINT) from exc
     if getattr(apxinf, "__file__", None) is None:  # pragma: no cover
+        checkout = _checkout_namespace_dir(apxinf)
+        if checkout is not None:
+            raise ImportError(
+                f"`import apxinf` resolved to a namespace containing {checkout}, "
+                "not a usable engine package.\n" + _INSTALL_HINT + "\n"
+                "If the engine is already installed editable in this Python "
+                "environment, the checkout may be interfering with its import. "
+                "Try running from another directory or removing the repository "
+                "root from sys.path as tests/conftest.py does."
+            )
         raise ImportError(_INSTALL_HINT)
     return apxinf
 
