@@ -553,6 +553,22 @@ follows `main`, as configured in `.gitmodules`. Before submitting
 an upgrade, review the gitlink diff and run `tests/test_parity.py` with
 `APXINF_PARITY_CHECKPOINT` set to a compatible checkpoint.
 
+
+## Acknowledgement
+
+The development of APXInf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
+In particular, we would like to thank the teams and contributors behind
+[FasterTransformer](https://github.com/NVIDIA/FasterTransformer),
+[TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM),
+[llama.cpp](https://github.com/ggml-org/llama.cpp),
+[FlashAttention](https://github.com/Dao-AILab/flash-attention),
+[FlashRT](https://github.com/flashrt-project/FlashRT/tree/main),
+[vLLM](https://github.com/vllm-project/vllm),
+[sgLang](https://github.com/sgl-project/sglang),
+and if we have inadvertently missed your project or contribution,
+please open an issue or a pull request so we can properly credit you.
+
+
 ## License
 
 Apache 2.0. Vendored third-party components retain their own licenses.
